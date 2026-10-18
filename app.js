@@ -1,5 +1,5 @@
 import { EditorView, basicSetup } from 'https://esm.sh/codemirror';
-import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+import { renderDiagram, getPeleTheme } from './diagram-renderer.js';
 
 // ===== Default diagram =====
 const defaultCode = `graph TD
@@ -564,11 +564,45 @@ function getMermaidTheme() {
   return localStorage.getItem('mermaidTheme') || 'default';
 }
 
+function getRenderer() {
+  return localStorage.getItem('diagramRenderer') === 'pele' ? 'pele' : 'mermaid';
+}
+
+function updateRendererUI() {
+  const isPele = getRenderer() === 'pele';
+  document.getElementById('select-renderer').value = getRenderer();
+  document.getElementById('select-mermaid-theme').title = isPele
+    ? 'Pele 对应配色，排版与 Mermaid 不同'
+    : 'Mermaid 图表主题';
+  const handDrawnButton = document.querySelector('[data-look="handDrawn"]');
+  handDrawnButton.disabled = isPele;
+  handDrawnButton.title = isPele ? 'Pele 不支持手绘风格' : '手绘风格';
+  if (isPele) handDrawnButton.setAttribute('aria-describedby', 'look-support-hint');
+  else handDrawnButton.removeAttribute('aria-describedby');
+  document.getElementById('look-support-hint').hidden = !isPele;
+  updateMermaidLookUI(getDiagramLook());
+}
+
+function setRenderer(renderer) {
+  localStorage.setItem('diagramRenderer', renderer === 'pele' ? 'pele' : 'mermaid');
+  updateRendererUI();
+  previewUserAdjusted = false;
+  renderPreview(editor.state.doc.toString(), { forceFit: true });
+}
+
+function updateRendererStatus(text, durationMs = null) {
+  const status = document.getElementById('renderer-status');
+  status.textContent = text;
+  const duration = document.getElementById('render-duration');
+  const hasDuration = Number.isFinite(durationMs) && durationMs >= 0;
+  duration.textContent = hasDuration ? `${durationMs < 0.01 ? '<0.01' : durationMs.toFixed(2)} ms` : '';
+  duration.title = hasDuration ? '本次渲染耗时，不含引擎加载和排队时间' : '';
+}
+
 function setMermaidTheme(theme) {
   localStorage.setItem('mermaidTheme', theme);
   document.getElementById('select-mermaid-theme').value = theme;
-  initMermaid();
-  renderMermaid(editor.state.doc.toString());
+  renderPreview(editor.state.doc.toString());
 }
 
 // ===== Mermaid Look =====
@@ -576,9 +610,14 @@ function getMermaidLook() {
   return localStorage.getItem('mermaidLook') || 'classic';
 }
 
+function getDiagramLook() {
+  return getRenderer() === 'pele' ? 'classic' : getMermaidLook();
+}
+
 function updateMermaidLookUI(look) {
   const buttons = document.querySelectorAll('.look-toggle .toggle-btn');
   buttons.forEach((btn) => {
+    btn.setAttribute('aria-pressed', String(btn.dataset.look === look));
     if (btn.dataset.look === look) {
       btn.classList.add('active');
     } else {
@@ -588,10 +627,10 @@ function updateMermaidLookUI(look) {
 }
 
 function setMermaidLook(look) {
+  if (getRenderer() === 'pele' && look === 'handDrawn') return;
   localStorage.setItem('mermaidLook', look);
   updateMermaidLookUI(look);
-  initMermaid();
-  renderMermaid(editor.state.doc.toString());
+  renderPreview(editor.state.doc.toString());
 }
 
 function setTheme(theme) {
@@ -600,11 +639,11 @@ function setTheme(theme) {
   document.getElementById('icon-sun').style.display = theme === 'dark' ? 'none' : '';
   document.getElementById('icon-moon').style.display = theme === 'dark' ? '' : 'none';
   recreateEditor(theme);
-  renderMermaid(editor.state.doc.toString());
+  renderPreview(editor.state.doc.toString());
 }
 
-function initMermaid() {
-  const look = getMermaidLook();
+function getMermaidConfig() {
+  const look = getDiagramLook();
   const config = {
     startOnLoad: false,
     theme: getMermaidTheme(),
@@ -616,7 +655,7 @@ function initMermaid() {
   } else {
     config.flowchart = { htmlLabels: false };
   }
-  mermaid.initialize(config);
+  return config;
 }
 
 // ===== Toast =====
@@ -633,13 +672,16 @@ function cleanupMermaidScratchRoot(id) {
   if (scratch) scratch.remove();
 }
 
-// ===== Mermaid Rendering =====
-async function renderMermaid(code, options = {}) {
+// ===== Diagram Rendering =====
+async function renderPreview(code, options = {}) {
   const preview = document.getElementById('preview');
   const trimmed = code.trim();
+  const leadingLineCount = code.slice(0, code.length - code.trimStart().length).split('\n').length - 1;
   const forceFit = options.forceFit === true;
   const requestId = ++latestRenderRequestId;
   let renderId = '';
+  const renderer = getRenderer();
+  const rendererName = renderer === 'pele' ? 'Pele' : 'Mermaid';
 
   if (!trimmed) {
     if (requestId !== latestRenderRequestId) return;
@@ -649,19 +691,38 @@ async function renderMermaid(code, options = {}) {
     previewPanY = 0;
     previewUserAdjusted = false;
     clearErrorHighlight();
+    updateDirectionControl('');
+    updateRendererStatus('');
+    preview.removeAttribute('aria-busy');
     return;
   }
 
+  updateRendererStatus(`${rendererName} · 渲染中…`);
+  preview.setAttribute('aria-busy', 'true');
   try {
     renderId = `mermaid-svg-${++renderCounter}`;
-    const { svg } = await mermaid.render(renderId, trimmed);
+    const result = await renderDiagram(trimmed, {
+      renderer,
+      id: renderId,
+      config: getMermaidConfig(),
+      fontFamily: getComputedStyle(preview).fontFamily,
+    });
     cleanupMermaidScratchRoot(renderId);
     if (requestId !== latestRenderRequestId) return;
     const hadSvg = !!preview.querySelector('svg');
     const savedScale = previewScale;
     const savedPanX = previewPanX;
     const savedPanY = previewPanY;
-    preview.innerHTML = svg;
+    lastHoveredGroup = null;
+    preview.innerHTML = result.svg;
+    if (result.renderer === 'pele') {
+      const svgEl = preview.querySelector('svg');
+      const palette = getPeleTheme(getMermaidTheme());
+      Object.entries(palette).forEach(([name, value]) => svgEl.style.setProperty(name, value));
+      svgEl.style.backgroundColor = palette['--pele-bg'];
+    }
+    const actualName = result.renderer === 'pele' ? 'Pele' : 'Mermaid';
+    updateRendererStatus(actualName, result.durationMs);
     clearErrorHighlight();
     updateDirectionControl(trimmed);
     const shouldPreserveView = hadSvg && !forceFit && previewUserAdjusted;
@@ -682,9 +743,14 @@ async function renderMermaid(code, options = {}) {
     cleanupMermaidScratchRoot(renderId);
     if (requestId !== latestRenderRequestId) return;
 
-    preview.innerHTML = `<div class="error-message">${escapeHtml(err.message || String(err))}</div><button class="error-help-toggle" id="btn-error-help"><span class="arrow">&#9654;</span> 自查常见错误</button>`;
-    highlightErrorLine(err.message || String(err));
+    const unsupported = err.code === 'unsupported-config' || err.code === 'unsupported-diagram';
+    const errorHelp = unsupported ? '' : '<button class="error-help-toggle" id="btn-error-help"><span class="arrow">&#9654;</span> 自查常见错误</button>';
+    preview.innerHTML = `<div class="error-message">${escapeHtml(err.message || String(err))}</div>${errorHelp}`;
+    highlightErrorLine(err, leadingLineCount);
+    updateRendererStatus(`${rendererName} · ${unsupported ? '不支持' : '渲染失败'}`);
     updateDirectionControl(trimmed);
+  } finally {
+    if (requestId === latestRenderRequestId) preview.removeAttribute('aria-busy');
   }
 }
 
@@ -696,7 +762,7 @@ function escapeHtml(str) {
 
 function debouncedRender(code) {
   clearTimeout(renderTimer);
-  renderTimer = setTimeout(() => renderMermaid(code), 300);
+  renderTimer = setTimeout(() => renderPreview(code), getRenderer() === 'pele' ? 100 : 300);
 }
 
 // ===== Editor Setup =====
@@ -761,7 +827,7 @@ function setEditorContent(code) {
   });
   suppressDebouncedRender = false;
   previewUserAdjusted = false;
-  renderMermaid(code, { forceFit: true });
+  renderPreview(code, { forceFit: true });
   focusEditorWithoutPageScroll();
 }
 
@@ -968,6 +1034,17 @@ const meaningfulClasses = ['node', 'edgeLabel', 'actor', 'note', 'cluster',
   'person-man'];
 
 function findMermaidElement(target) {
+  // Pele preserves source IDs in data-id, including nodes with duplicate labels.
+  if (target.closest('svg.pele')) {
+    const group = target.closest('[data-id]');
+    if (group) {
+      const label = group.querySelector('.pele-label, text');
+      return { nodeId: group.getAttribute('data-id'), text: label?.textContent.trim() || '', groupEl: group };
+    }
+    // Chart axes and other standalone labels do not always carry a source ID.
+    const label = target.closest('text');
+    return label ? { nodeId: null, text: label.textContent.trim(), groupEl: label } : null;
+  }
   let el = target;
   // Pass 1: Walk up to find a meaningful <g> group
   while (el && el.tagName !== 'svg') {
@@ -1142,17 +1219,19 @@ function clearErrorHighlight() {
   }
 }
 
-function highlightErrorLine(msg) {
+function highlightErrorLine(error, leadingLineCount = 0) {
   if (!errorLineStyleEl) {
     errorLineStyleEl = document.createElement('style');
     document.head.appendChild(errorLineStyleEl);
   }
+  const msg = error.message || String(error);
   const match = msg.match(/on line (\d+)/i);
-  if (!match) {
+  const reportedLine = Number(error.line) || (match ? parseInt(match[1], 10) : 0);
+  if (!Number.isInteger(reportedLine) || reportedLine < 1) {
     clearErrorHighlight();
     return;
   }
-  const lineNum = parseInt(match[1], 10);
+  const lineNum = Math.min(reportedLine + leadingLineCount, editor.state.doc.lines);
   errorLineStyleEl.textContent =
     `.cm-content > .cm-line:nth-child(${lineNum}) { background: rgba(220, 38, 38, 0.15) !important; box-shadow: inset 3px 0 0 var(--error-color); }`;
 }
@@ -1382,6 +1461,27 @@ function getSvgString() {
   }
   // Clone SVG to export without preview transform
   const clone = svgEl.cloneNode(true);
+  if (svgEl.classList.contains('pele')) {
+    // Freeze computed presentation values so exports also work outside this page.
+    const originals = [svgEl, ...svgEl.querySelectorAll('*')];
+    const copies = [clone, ...clone.querySelectorAll('*')];
+    originals.forEach((element, index) => {
+      const copy = copies[index];
+      const computed = getComputedStyle(element);
+      for (const attr of element.attributes) {
+        if (attr.name !== 'style' && attr.value.includes('var(')) {
+          const value = computed.getPropertyValue(attr.name);
+          if (value) copy.setAttribute(attr.name, value);
+        }
+      }
+      for (const property of element.style) {
+        if (!property.startsWith('--') && element.style.getPropertyValue(property).includes('var(')) {
+          copy.style.setProperty(property, computed.getPropertyValue(property));
+        }
+      }
+    });
+  }
+  clone.querySelectorAll('.mermaid-hoverable').forEach((element) => element.classList.remove('mermaid-hoverable'));
   clone.style.transform = '';
   clone.style.transformOrigin = '';
   const serializer = new XMLSerializer();
@@ -1413,10 +1513,12 @@ function svgToCanvas(svgString, options = {}) {
       height = parseFloat(svgEl.getAttribute('height')) || 600;
     }
 
-    // Force SVG size to match viewBox content, remove container styles
+    // Remove sizing/preview styles while keeping Pele's colors and fonts.
     svgEl.setAttribute('width', width);
     svgEl.setAttribute('height', height);
-    svgEl.removeAttribute('style');
+    for (const property of ['max-width', 'width', 'height', 'transform', 'transform-origin']) {
+      svgEl.style.removeProperty(property);
+    }
 
     const serializer = new XMLSerializer();
     const fixedSvg = serializer.serializeToString(svgEl);
@@ -1447,7 +1549,7 @@ function svgToCanvas(svgString, options = {}) {
       canvas.width = canvasWidth;
       canvas.height = canvasHeight;
       const ctx = canvas.getContext('2d');
-      ctx.fillStyle = getTheme() === 'dark' ? '#1e1e1e' : '#ffffff';
+      ctx.fillStyle = svgEl.style.getPropertyValue('--pele-bg') || (getTheme() === 'dark' ? '#1e1e1e' : '#ffffff');
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       resolve(canvas);
@@ -1635,8 +1737,8 @@ function init() {
   // Restore mermaid look selection
   const mermaidLook = getMermaidLook();
   updateMermaidLookUI(mermaidLook);
+  updateRendererUI();
 
-  initMermaid();
   editor = createEditor(theme);
   initDivider();
   initPreviewZoomPan();
@@ -1650,7 +1752,7 @@ function init() {
     setEditorContent(urlCode);
     clearUrlCodeParam();
   } else {
-    renderMermaid(defaultCode);
+    renderPreview(defaultCode);
   }
 
   // Bind toolbar buttons
@@ -1661,6 +1763,9 @@ function init() {
   document.getElementById('btn-theme').addEventListener('click', () => {
     const next = getTheme() === 'light' ? 'dark' : 'light';
     setTheme(next);
+  });
+  document.getElementById('select-renderer').addEventListener('change', (e) => {
+    setRenderer(e.target.value);
   });
 
   // Bind mermaid theme selector
@@ -1705,12 +1810,14 @@ function init() {
   });
 
   // Number input change
-  sizeValueInput.addEventListener('change', () => {
+  const savePngSizeValue = () => {
     const val = parseInt(sizeValueInput.value, 10);
     if (val >= 100 && val <= 10000) {
       setPngSizeValue(val);
     }
-  });
+  };
+  sizeValueInput.addEventListener('input', savePngSizeValue);
+  sizeValueInput.addEventListener('change', savePngSizeValue);
 
   // ===== Error Help Toggle (event delegation) =====
   document.getElementById('preview').addEventListener('click', (e) => {

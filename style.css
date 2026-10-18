@@ -171,6 +171,26 @@ body {
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+.toolbar button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: var(--btn-bg);
+  border-color: var(--btn-border);
+  color: var(--text-secondary);
+  transform: none;
+  box-shadow: none;
+}
+
+.toolbar button:disabled svg {
+  transform: none;
+}
+
+.look-support-hint {
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .toolbar button:active {
   background: var(--btn-active);
   transform: translateY(0);
@@ -317,6 +337,34 @@ body {
   font-weight: 500;
   text-transform: none;
   letter-spacing: 0;
+}
+
+.preview-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin-right: 8px;
+}
+
+.renderer-status {
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.render-duration {
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .pane-control {
@@ -799,6 +847,25 @@ body {
 }
 
 /* ===== Responsive ===== */
+@media (max-width: 1100px) {
+  .toolbar {
+    height: auto;
+    min-height: 52px;
+    flex-wrap: wrap;
+    padding: 8px 16px;
+  }
+
+  .toolbar-left {
+    max-width: 100%;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .toolbar-right {
+    max-width: 100%;
+  }
+}
+
 @media (max-width: 768px) {
   .toolbar {
     height: auto;

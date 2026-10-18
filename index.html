@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mermaid Exporter</title>
+  <title>Diagram Studio</title>
   <link rel="icon" type="image/svg+xml" href="asserts/favicon.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="asserts/favicon.png">
   <link rel="stylesheet" href="style.css">
@@ -11,8 +11,12 @@
 <body>
   <header class="toolbar">
     <div class="toolbar-left">
-      <h1 class="logo">Mermaid Exporter</h1>
-      <select id="select-mermaid-theme" title="Mermaid 图表主题">
+      <h1 class="logo">Diagram Studio</h1>
+      <select id="select-renderer" title="图表渲染器" aria-label="图表渲染器">
+        <option value="mermaid">Mermaid</option>
+        <option value="pele">Pele</option>
+      </select>
+      <select id="select-mermaid-theme" title="图表主题" aria-label="图表主题">
         <option value="default">Default</option>
         <option value="neutral">Neutral</option>
         <option value="dark">Dark</option>
@@ -37,6 +41,7 @@
             <span>手绘</span>
           </button>
         </div>
+        <span id="look-support-hint" class="look-support-hint" hidden>Pele 不支持手绘</span>
       </div>
     </div>
     <div class="toolbar-right">
@@ -106,7 +111,7 @@
     <div class="divider" id="divider"></div>
     <div class="pane preview-pane" id="preview-pane">
       <div class="pane-header">
-        <span class="pane-title">预览</span>
+        <span class="preview-heading"><span class="pane-title">预览</span><span id="renderer-status" class="renderer-status" role="status"></span><span id="render-duration" class="render-duration"></span></span>
         <div class="direction-control" id="direction-control" style="display:none">
           <span class="direction-label">方向</span>
           <div class="png-size-toggle direction-toggle">
